@@ -321,20 +321,13 @@ void TeensyTransfer::serflash_ready() {
 }
 
 void TeensyTransfer::serflash_info(void) {
-  unsigned char id[8];
-  uint32_t sz;
-
+uint32_t sz;	
 	buffer[0]=1;
-	SerialFlash.readID(id);
-	buffer[8]=id[0];
-	buffer[9]=id[1];
-	buffer[10]=id[2];
-
-	sz = SerialFlash.capacity(id);
+	SerialFlash.readID(&buffer[8]);
+	sz = SerialFlash.capacity(&buffer[8]);
 	val32_buf(sz,1);
-	
-	SerialFlash.readSerialNumber(id);
-	memcpy(id,&buffer[16],8);
+
+	SerialFlash.readSerialNumber(&buffer[16]);
 	RawHID.send(buffer, 100);
 }
 
