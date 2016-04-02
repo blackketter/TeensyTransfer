@@ -1,6 +1,7 @@
 /*
   TeensyTransfer Demo
-	
+  
+  To make a USB RawHID device, use the Tools > USB Type menu	
 */
 
 
