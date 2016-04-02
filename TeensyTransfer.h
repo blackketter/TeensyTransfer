@@ -30,7 +30,7 @@
 #define _HAVE_EEPROM		//Teensy internal EEPROM
 #define _HAVE_TEENSY		//Teensy internals like Model or MAC
 #define _HAVE_SERFLASH		//Serial Flash
-#define _HAVE_PARFLASH		//Parallel Flash
+//#define _HAVE_PARFLASH		//Parallel Flash
 
 /***********************************************************************/
 
