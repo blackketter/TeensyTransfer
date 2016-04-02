@@ -26,7 +26,7 @@
 
 #if defined(KINETISK) || defined(KINETISL)
 
-#include <avr/eeprom.h>
+#include <arm_math.h>
 
 TeensyTransfer ttransfer;
 
@@ -36,7 +36,7 @@ void TeensyTransfer::transfer(void) {
   int n;
 	n = RawHID.recv(buffer, 0); // 0 timeout = do not wait
 	if (n<1) return;
-	  
+
 	mode = buffer[0];
 	device = buffer[1];
 	if ( hid_sendAck() < 0 ) {
@@ -46,40 +46,39 @@ void TeensyTransfer::transfer(void) {
 
 	switch (device) {
 #ifdef _HAVE_SERFLASH
-		case 0 : {
-				SerialFlash.begin(FlashChipSelect);
+		case 0 : {				
 				switch (mode) {
 					case 0 : serflash_write();break;
 					case 1 : serflash_read();break;
 					case 2 : serflash_list();break;
 					case 3 : serflash_erasefile();break;
-				//case 4 : serflash_erasedevice();break; todo...
-				//case 9 : serflash_info();break; todo...
+					case 4 : serflash_erasedevice();break;
+					case 9 : serflash_info();break;
+					case 99: serflash_ready();break;
 					default: return;
 				};
 				break;
 				}
 	#endif
 
-	#ifdef _HAVE_PARFLASH		
-		case 2 : {
-				ParallelFlash.begin();
+	#ifdef _HAVE_PARFLASH
+		case 2 : {			
 				switch (mode) {
 					case 0 : parflash_write();break;
 					case 1 : parflash_read();break;
 					case 2 : parflash_list();break;
 					case 3 : parflash_erasefile();break;
-				//case 4 : parflash_erasedevice();break; todo...
-				//case 9 : parflash_info();break; todo...
+					case 4 : parflash_erasedevice();break;
+					case 9 : parflash_info();break;
+					case 99: parflash_ready();break;
 					default: return;
 				};
 				break;
 				}
-	#endif	
-	
+	#endif
+
 	#ifdef _HAVE_EEPROM
-		case 1 : {
-				eeprom_initialize();
+		case 253 : {								
 				switch (mode) {
 					case 0 : eeprom_write();break;
 					case 1 : eeprom_read();break;
@@ -88,7 +87,11 @@ void TeensyTransfer::transfer(void) {
 				break;
 				};
 	#endif
-	
+
+	#ifdef _HAVE_TEENSY
+		case 254 : if (mode==9) teensy_info();
+	#endif
+
 		default: return;
 		}
 }
@@ -115,10 +118,22 @@ int TeensyTransfer::hid_sendWithAck(void) {
 	n = RawHID.send(buffer, 100);
 	if (n < 1) return -1;
 	n = RawHID.recv(buf2, 100);
-	if (n < 1) return -2;
+	if (n < 1) return -1;
 	n =  memcmp(buffer, buf2, sizeof(buffer));
-	if (n) return -3;
+	if (n) return -1;
 	return 0;
+}
+
+void TeensyTransfer::val32_buf(const uint32_t val,const uint32_t bufidx)
+{
+	uint32_t * p = (uint32_t*)&buffer[bufidx];
+	*p=__REV(val);
+}
+
+uint32_t TeensyTransfer::buf_val32(const uint32_t bufidx)
+{
+	uint32_t * p = (uint32_t*)&buffer[bufidx];
+	return __REV(*p);
 }
 
 /********************************************************************************
@@ -131,14 +146,13 @@ void TeensyTransfer::serflash_write(void) {
   size_t sz, pos;
   char filename[64];
 
-	sz = (buffer[2] << 24) | (buffer[3] << 16) | (buffer[4 ] << 8) | buffer[5];
-
+	sz = buf_val32(2);
 	n = RawHID.recv(buffer, 500);
 	if (n < 0) {
 		//Serial.printf("timeout\n");
 		return;
-	}	
-	
+	}
+
 	strcpy( filename, (char*) &buffer[0]);
 	//Serial.printf("Filename:%s\n", &filename[0]);
 	if (SerialFlash.exists(filename)) {
@@ -202,12 +216,9 @@ void TeensyTransfer::serflash_read(void) {
 	SerialFlashFile ff = SerialFlash.open(filename);
 
 	sz = ff.size();
-	buffer[1] = (sz >> 24) & 0xff;
-	buffer[2] = (sz >> 16) & 0xff;
-	buffer[3] = (sz >> 8) & 0xff;
-	buffer[4] = sz & 0xff;
+	val32_buf(sz,1);
 	//Serial.printf("Size:%d",sz);
-	
+
 	n = hid_sendWithAck();
 	if (n) {
 //      Serial.println("Error");
@@ -239,10 +250,7 @@ void TeensyTransfer::serflash_list(void) {
 
 			//Send Filesize
 			buffer[0] = 1;
-			buffer[1] = (sz >> 24) & 0xff;
-			buffer[2] = (sz >> 16) & 0xff;
-			buffer[3] = (sz >> 8) & 0xff;
-			buffer[4] = sz & 0xff;
+			val32_buf(sz,1);
 
 			n = hid_sendWithAck();
 			if (n) {
@@ -264,11 +272,7 @@ void TeensyTransfer::serflash_list(void) {
 	/*
 	  sz = SerialFlash.available();
 	  buffer[0] = 2;
-	  buffer[1] = (sz >> 24) & 0xff;
-	  buffer[2] = (sz >> 16) & 0xff;
-	  buffer[3] = (sz >> 8) & 0xff;
-	  buffer[4] = sz & 0xff;
-
+	  val32_buf(sz,1);
 	  n = hid_sendWithAck();
 	  if (n) {
 	  Serial.println("Error");
@@ -306,6 +310,35 @@ void TeensyTransfer::serflash_erasefile(void) {
 	RawHID.send(buffer, 100);
 	return;
 }
+
+void TeensyTransfer::serflash_erasedevice() {
+	SerialFlash.eraseAll();	
+}
+
+void TeensyTransfer::serflash_ready() {
+	buffer[0] = !SerialFlash.ready();
+	RawHID.send(buffer, 100);
+}
+
+void TeensyTransfer::serflash_info(void) {
+  unsigned char id[8];
+  uint32_t sz;
+
+	buffer[0]=1;
+	ParallelFlash.readID(id);
+	buffer[8]=id[0];
+	buffer[9]=id[1];
+	buffer[10]=id[2];
+
+	sz = ParallelFlash.capacity(id);
+	val32_buf(sz,1);
+
+	//ParallelFlash.readSerialNumber((uint8_t*)&buffer[16]);
+	ParallelFlash.readSerialNumber(id);
+	memcpy(id,&buffer[16],8);
+	RawHID.send(buffer, 100);
+}
+
 #endif //#ifdef _HAVE_SERFLASH
 
 /********************************************************************************
@@ -318,14 +351,14 @@ void TeensyTransfer::parflash_write(void) {
   size_t sz, pos;
   char filename[64];
 
-	sz = (buffer[2] << 24) | (buffer[3] << 16) | (buffer[4 ] << 8) | buffer[5];
+	sz = buf_val32(2);
 
 	n = RawHID.recv(buffer, 500);
 	if (n < 0) {
 		//Serial.printf("timeout\n");
 		return;
-	}	
-	
+	}
+
 	strcpy( filename, (char*) &buffer[0]);
 	//Serial.printf("Filename:%s\n", &filename[0]);
 	if (ParallelFlash.exists(filename)) {
@@ -351,7 +384,7 @@ void TeensyTransfer::parflash_write(void) {
 	while (pos < sz) {
 		n = RawHID.recv(buffer, 500);
 		if (n < 0) {
-//     	  Serial.printf("timeout\n");
+//     	  	Serial.printf("timeout\n");
 			return;
 		}
 		ff.write(buffer, sizeof(buffer));
@@ -375,7 +408,7 @@ void TeensyTransfer::parflash_read(void) {
 	if (n >= 0) n = hid_sendAck();
 	if (n < 0) {
 //      Serial.printf("timeout\n");
-	  return;
+		return;
 	}
 
 	strcpy( filename, (char*) &buffer[0]);
@@ -389,12 +422,9 @@ void TeensyTransfer::parflash_read(void) {
 	ParallelFlashFile ff = ParallelFlash.open(filename);
 
 	sz = ff.size();
-	buffer[1] = (sz >> 24) & 0xff;
-	buffer[2] = (sz >> 16) & 0xff;
-	buffer[3] = (sz >> 8) & 0xff;
-	buffer[4] = sz & 0xff;
+	val32_buf(sz,1);
 	//Serial.printf("Size:%d",sz);
-	
+
 	n = hid_sendWithAck();
 	if (n) {
 //      Serial.println("Error");
@@ -408,7 +438,7 @@ void TeensyTransfer::parflash_read(void) {
 			n = hid_sendWithAck();
 			if (n) {
 //          	Serial.println("Error");
-			return;
+				return;
 			}
 		}
 	} while (r > 0);
@@ -426,11 +456,7 @@ void TeensyTransfer::parflash_list(void) {
 
 			//Send Filesize
 			buffer[0] = 1;
-			buffer[1] = (sz >> 24) & 0xff;
-			buffer[2] = (sz >> 16) & 0xff;
-			buffer[3] = (sz >> 8) & 0xff;
-			buffer[4] = sz & 0xff;
-
+			val32_buf(sz,1);
 			n = hid_sendWithAck();
 			if (n) {
 	//          Serial.println("Error");
@@ -493,7 +519,78 @@ void TeensyTransfer::parflash_erasefile(void) {
 	RawHID.send(buffer, 100);
 	return;
 }
+
+void TeensyTransfer::parflash_erasedevice() {
+	ParallelFlash.eraseAll();	
+}
+
+void TeensyTransfer::parflash_ready() {
+	buffer[0] = !ParallelFlash.ready();
+	RawHID.send(buffer, 100);
+}
+
+void TeensyTransfer::parflash_info(void) {
+  uint32_t sz;
+
+	buffer[0]=1;
+	ParallelFlash.readID(&buffer[8]);
+	sz = ParallelFlash.capacity(&buffer[8]);
+	val32_buf(sz,1);
+
+	ParallelFlash.readSerialNumber(&buffer[16]);
+	RawHID.send(buffer, 100);
+}
 #endif //#ifdef _HAVE_PARFLASH
+
+/********************************************************************************
+ Teensy
+********************************************************************************/
+#ifdef _HAVE_TEENSY
+
+void TeensyTransfer::teensy_info(void) {
+		//Serial.println("Teensyinfo");
+		//Teensy Model
+		#if defined(__MK20DX128__)
+		buffer[0]=1;
+		#elif defined(__MK20DX256__)
+		buffer[0]=2;
+		#elif defined(__MKL26Z64__)
+		buffer[0]=3;
+		#elif defined(__MK64FX512__)
+		buffer[0]=4;
+		#elif defined(__MK66FX1M0__)
+		buffer[0]=5;
+		#else
+		buffer[0]=0;
+		#endif
+
+		val32_buf((E2END) + 1,1);
+		val32_buf(F_CPU,16);
+		val32_buf(F_PLL,20);
+		val32_buf(F_BUS,24);
+		val32_buf(F_MEM,28);
+
+		//MAC
+		FTFL_FCCOB0 = 0x41;             // Selects the READONCE command
+        FTFL_FCCOB1 = 0x0e;             // read the given word of read once area
+                                        // -- this is one half of the mac addr.
+        FTFL_FSTAT = FTFL_FSTAT_CCIF;   // Launch command sequence
+        while(!(FTFL_FSTAT & FTFL_FSTAT_CCIF)) {}
+        buffer[58] = FTFL_FCCOB5;       // collect only the top three bytes,
+        buffer[59] = FTFL_FCCOB6;       // in the right orientation (big endian).
+        buffer[60] = FTFL_FCCOB7;       // Skip FTFL_FCCOB4 as it's always 0.
+		//FTFL_FCCOB0 = 0x41;             // Selects the READONCE command
+        FTFL_FCCOB1 = 0x0f;             // read the given word of read once area
+                                        // -- this is one half of the mac addr.
+        FTFL_FSTAT = FTFL_FSTAT_CCIF;   // Launch command sequence
+        while(!(FTFL_FSTAT & FTFL_FSTAT_CCIF)) {}
+        buffer[61] = FTFL_FCCOB5;       // collect only the top three bytes,
+        buffer[62] = FTFL_FCCOB6;       // in the right orientation (big endian).
+        buffer[63] = FTFL_FCCOB7;       // Skip FTFL_FCCOB4 as it's always 0.
+
+		RawHID.send(buffer, 100);
+}
+#endif
 
 /********************************************************************************
  EEPROM
@@ -505,10 +602,7 @@ void TeensyTransfer::eeprom_read(void) {
   uint8_t *p;
 
 	sz = (E2END) + 1;
-	buffer[1] = (sz >> 24) & 0xff;
-	buffer[2] = (sz >> 16) & 0xff;
-	buffer[3] = (sz >> 8) & 0xff;
-	buffer[4] = sz & 0xff;
+	val32_buf(sz, 1);
 	//Serial.printf("Size:%d",sz);
 	n = hid_sendWithAck();
 	if (n) {
@@ -535,10 +629,7 @@ void TeensyTransfer::eeprom_write(void) {
   uint8_t *p;
 
 	sz = (E2END) + 1;
-	buffer[1] = (sz >> 24) & 0xff;
-	buffer[2] = (sz >> 16) & 0xff;
-	buffer[3] = (sz >> 8) & 0xff;
-	buffer[4] = sz & 0xff;
+	val32_buf(sz, 1);
 	//Serial.printf("Size:%d",sz);
 	n = hid_sendWithAck();
 	if (n) {

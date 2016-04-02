@@ -27,9 +27,10 @@
 
 
 //Disable unneeded functionality by commenting-out one or more of the following lines:
-#define _HAVE_SERFLASH	//Serial Flash
-#define _HAVE_EEPROM	//Teensy internal EEPROM
-//#define _HAVE_PARFLASH	//Parallel Flash
+#define _HAVE_EEPROM		//Teensy internal EEPROM
+#define _HAVE_TEENSY		//Teensy internals like Model or MAC
+#define _HAVE_SERFLASH		//Serial Flash
+#define _HAVE_PARFLASH		//Parallel Flash
 
 /***********************************************************************/
 
@@ -42,25 +43,22 @@
 #endif
 
 #if !defined(USB_RAWHID)
-#error "Raw Hid" mode not set.
+#error To make a USB RawHID device, use the Tools > USB Type menu
 #endif
 
 
 #ifdef _HAVE_SERFLASH
 #include <SerialFlash.h>
 #include <SPI.h>
-
-#ifdef FLASHCHIPSELECT  // digital pin for flash chip CS pin
-const int FlashChipSelect = FLASHCHIPSELECT;
-#else
-const int FlashChipSelect = 6;
-#endif
 #endif
 
 #ifdef _HAVE_PARFLASH
 #include <ParallelFlash.h>
 #endif
 
+#ifdef _HAVE_EEPROM
+#include <avr/eeprom.h>
+#endif
 
 class TeensyTransfer {
 public:
@@ -70,12 +68,17 @@ private:
 	int hid_sendAck(void);
 	int hid_checkAck(void);
 	int hid_sendWithAck(void);
+	inline void val32_buf(const uint32_t val,const uint32_t bufidx);
+	inline uint32_t buf_val32(const uint32_t bufidx);
 
-#ifdef _HAVE_SERFLASH
+#ifdef _HAVE_SERFLASH	
 	void serflash_write(void);
 	void serflash_read(void);
 	void serflash_list(void);
 	void serflash_erasefile(void);
+	void serflash_erasedevice(void);
+	void serflash_info(void);
+	void serflash_ready(void);
 #endif
 
 #ifdef _HAVE_PARFLASH
@@ -83,6 +86,9 @@ private:
 	void parflash_read(void);
 	void parflash_list(void);
 	void parflash_erasefile(void);
+	void parflash_erasedevice(void);
+	void parflash_info(void);
+	void parflash_ready(void);
 #endif
 
 #ifdef _HAVE_EEPROM
@@ -90,6 +96,9 @@ private:
 	void eeprom_read(void);
 #endif
 
+#ifdef _HAVE_TEENSY
+	void teensy_info(void);
+#endif
 };
 
 extern TeensyTransfer ttransfer;

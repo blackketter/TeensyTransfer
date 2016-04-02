@@ -13,11 +13,13 @@
 #if defined(OS_LINUX) || defined(OS_MACOSX)
 #include <sys/ioctl.h>
 #include <termios.h>
+#define DELAY(x) { nanosleep((const struct timespec[]){{0, x * 1000L* 1000L}}, NULL); }
 #elif defined(OS_WINDOWS)
 #include <conio.h>
 #include <fcntl.h>
 #include <windows.h>
 unsigned int _CRT_fmode = _O_BINARY;
+#define DELAY(x) { Sleep( x * 1000); }
 #endif
 
 #include "hid.h"
@@ -26,7 +28,7 @@ unsigned int _CRT_fmode = _O_BINARY;
 #define MAX(x, y) (((x) > (y)) ? (x) : (y))
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 
-
+#define DOTCNTPACKETS 64 //Print a dot after x packets (64*64 bytes=4 KB)
 
 const int hid_device = 0;
 
@@ -54,15 +56,17 @@ void usage(const char *err)
 {
 	if(err != NULL) fprintf(stderr, "%s\n\n", err);
 	fprintf(stderr,
-		"Usage: teensytransfer [-w] [-r] [-l] [-e] [device] <file>\n"
+		"Usage: teensytransfer [-w] [-r] [-l] [-d] [device] <file>\n"
 		"\t-w : write (default)\n"
 		"\t-r : read\n"
-		"\t-e : erase file\n"
-		//"\t-E : erase device\n"
+		"\t-d : delete file\n"
+		"\t-e : erase device\n"
 		"\t-l : list files\n"
+		"\t-i: dvice info\n"
 		//"\t-v : Verbose output\n"
 		"\n"
 		"\t Devices:\n"
+		"\tteensy\n"
 		"\tserflash (default)\n"
 		"\tparflash\n"
 		"\teeprom\n"
@@ -71,16 +75,26 @@ void usage(const char *err)
 	exit(1);
 }
 
+void debug(void) __attribute__((__unused__));
+void debug(void) 
+{
+	printf("USB:");
+	int i;
+	for (i=0;i<sizeof(buf);i++) printf("%x ",buf[i]);
+	printf("\n");
+}	
+
 void parse_flag(char *arg)
 {
 	int i;
 	for(i=1; arg[i]; i++) {
 		switch(arg[i]) {
-			case 'w': mode = 0; break;
-			case 'r': mode = 1; break;
-			case 'l': mode = 2; break;
-			case 'e': mode = 3; break;
-			//case 'E': mode = 4; break;
+			case 'w': mode = 0; break; //write
+			case 'r': mode = 1; break; //read
+			case 'l': mode = 2; break; //list
+			case 'd': mode = 3; break; //delete file
+			case 'e': mode = 4; break; //erase device
+			case 'i': mode = 9; break; //info
 			//case 'v': verbose = 1; break;
 			default:
 				fprintf(stderr, "Unknown flag '%c'\n\n", arg[i]);
@@ -114,9 +128,10 @@ void parse_options(int argc, char **argv)
 			}
 			else parse_flag(arg);
 		}
-		else if (strcmp("serflash", arg) == 0) device = 0;
-		else if (strcmp("eeprom", arg) == 0) device = 1;
+		else if (strcmp("serflash", arg) == 0) device = 0;		
 		else if (strcmp("parflash", arg) == 0) device = 2;
+		else if (strcmp("eeprom", arg) == 0) device = 253;
+		else if (strcmp("teensy", arg) == 0) device = 254;
 //		else if (strcmp("sdcard", arg) == 0) device = 3; todo...
 		else fname = arg;
 	}
@@ -163,7 +178,7 @@ int n;
 }
 
 /***********************************************************************************************************
-  serflash
+  serial flash / parallel flash
 ************************************************************************************************************/
 
 
@@ -172,6 +187,7 @@ void serflash_read(void);
 void serflash_list(void);
 void serflash_delfile(void);
 void serflash_erase(void);
+void serflash_info(void);
 
 void serflash() {
   switch (mode) {
@@ -180,12 +196,14 @@ void serflash() {
 	case 2 : serflash_list();break;
 	case 3 : serflash_delfile();break;
 	case 4 : serflash_erase();break;
+	case 9 : serflash_info();break;
+	default: die("Command not supported by device");
   }
 }
 
 void serflash_write(void) {
   FILE *fp;
-  int sz,r, pos;
+  int sz,r, pos, dotcnt;
   char * buffer;
   char *basec, *bname;
 	
@@ -234,6 +252,8 @@ void serflash_write(void) {
 	fclose (fp);
 
 	//Transfer the file to the Teensy
+	printf(".");
+	dotcnt = 0;
 	pos = 0;
 	while (pos < sz) {
 		int c = MIN(sizeof(buf), sz-pos);
@@ -242,11 +262,16 @@ void serflash_write(void) {
 		pos += c;
 		r = rawhid_send(hid_device, buf, sizeof(buf), 200);
 		if (r < 0 ) die("Transfer error");
+		if (++dotcnt > DOTCNTPACKETS) {
+			printf(".");
+			fflush(stdout);
+			dotcnt = 0;
+		}
 	}
 	free (buffer);
 
 	if (hid_checkAck() != 0)  commErr() ;
-	//printf("%d\n",pos);
+	printf("\n");
 
 };
 
@@ -325,18 +350,51 @@ uint32_t n;
 
 }
 
+
+
 void serflash_erase(void) {
-	printf("erase chip\n");
+const int timeToSleep = 200;
+int t = 0;
+	//printf("erase chip\n");
 	memset(buf, 0, sizeof(buf));
 	buf[0] = mode;
 	buf[1] = device;
 	hid_sendWithAck();
-
-	rawhid_recv(hid_device, buf, sizeof(buf), 0);
+	
+	do {		
+		DELAY( timeToSleep ); 
+		buf[0] = 99;
+		buf[1] = device;
+		hid_sendWithAck();
+		rawhid_recv(hid_device, buf, sizeof(buf), 100);
+		if (buf[0]==0) break;
+		if (++t >= 1000 /  timeToSleep / 2) {
+			printf(".");
+			fflush(stdout);
+			t = 0;
+		}
+	} while (1);
+	printf("\n");
 
 };
 
+void serflash_info(void) {
+int n;	
+uint32_t sz;	
+//	printf("info");
+	buf[0] = mode;
+	buf[1] = device;
+	hid_sendWithAck();
 
+	n = rawhid_recv(hid_device, buf, sizeof(buf), 100);
+	if (n < 1) commErr();
+	
+	printf("ID    : %02X %02X %02X\n", buf[8], buf[9], buf[10] );
+	printf("Serial: %02X %02X %02X %02X %02X %02X %02X %02X\n", buf[16],buf[17],buf[18],buf[19],buf[20],buf[21],buf[22],buf[23]);	
+	sz = (buf[1] << 24) | (buf[2] << 16) | (buf[3] << 8) | buf[4];
+	printf("Size  : %d Bytes\n", sz);
+	//debug();
+};
 
 /***********************************************************************************************************
   eeprom
@@ -350,7 +408,9 @@ void eeprom() {
 	case 0 : eeprom_write(); break;
 	case 1 : eeprom_read();break;
 	//case 4 : extflash_erase();break; todo...
+	default: die("Command not supported by device");
   }
+  
 }
 
 void eeprom_write(void) {
@@ -436,15 +496,59 @@ void eeprom_read(void) {
 	fflush(stdout);
 }
 
-/***********************************************************************************************************/
+/***********************************************************************************************************
+  Teensy
+************************************************************************************************************/
+void teensy(void) {
+  unsigned sz;	
+	if (mode!=9) die("Command not supported by device");
+	buf[0] = mode;
+	buf[1] = device;
+	hid_sendWithAck();
+	rawhid_recv(hid_device, buf, sizeof(buf), 100);
+	
+	printf("Model : ");
+	switch (buf[0]) {
+		case 1: printf("Teensy 3.0 (MK20DX128)");break;
+		case 2: printf("Teensy 3.1/3.2 (MK20DX256)");break;
+		case 3: printf("Teensy LC (MKL26Z64)");break;
+		case 4: printf("?? (MK64FX512)");break; 
+		case 5: printf("?? (MK66FX1M0)");break;
+		default: printf("unknown");break;
+	}
+	printf("\n");
+
+	sz = buf[61]<<16 | buf[62]<<8 | buf[63];
+	printf("Serial: %d\n",sz);
+	
+	printf("MAC   : %02X:%02X:%02X:%02X:%02X:%02X\n",buf[58],buf[59],buf[60],buf[61],buf[62],buf[63]);
+	
+	sz = (buf[1] << 24) | (buf[2] << 16) | (buf[3] << 8) | buf[4];
+	printf("EEPROM: %d Bytes\n",sz);
+	
+	sz = (buf[16] << 24) | (buf[17] << 16) | (buf[18] << 8) | buf[19];
+	printf("F_CPU : %d Hz\n",sz);
+
+	sz = (buf[20] << 24) | (buf[21] << 16) | (buf[22] << 8) | buf[23];
+	printf("F_PLL : %d Hz\n",sz);
+
+	sz = (buf[24] << 24) | (buf[25] << 16) | (buf[26] << 8) | buf[27];
+	printf("F_BUS : %d Hz\n",sz);
+
+	sz = (buf[28] << 24) | (buf[29] << 16) | (buf[30] << 8) | buf[31];
+	printf("F_MEM : %d Hz",sz);	
+	//debug();
+}
+
+/************************************************************************************************************/
 int main(int argc, char **argv)
 {
 
 	parse_options(argc, argv);
 
-	if ( (mode == 0 || mode == 1 || mode == 3) && (fname==NULL) && (device==0 || device==2) ) usage("Filename required");	
-	if (mode == 4 && fname != NULL) usage("Filename not allowed");
-
+	if ( (mode == 0 || mode == 1 || mode == 3) && (fname==NULL)  && (device<200)) usage("Filename required");	
+	if ((mode==2 || mode == 4 || mode==9) && fname != NULL) usage("Filename not allowed");
+	
 
 	int r;
 	// C-based example is 16C0:0480:FFAB:0200
@@ -462,7 +566,8 @@ int main(int argc, char **argv)
 	switch(device) {
 		case 0:
 		case 2: serflash();break;
-		case 1: eeprom();break;
+		case 253: eeprom();break;
+		case 254: teensy();break;
 		default: usage(NULL);
 	}
 	/*
