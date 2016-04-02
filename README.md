@@ -12,3 +12,4 @@ The gz - file contains the Linux-version, the *.zip the Windows-version
 The .mac.zip file contains the Mac OS version
 
 Documentation here:
+https://forum.pjrc.com/threads/33859-TeensyTransfer?p=101306
