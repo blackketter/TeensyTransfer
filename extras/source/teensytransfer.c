@@ -297,8 +297,9 @@ void serflash_read(void) {
 
 	sz = (buf[1] << 24) | (buf[2] << 16) | (buf[3] << 8) | buf[4];
 	//printf("size:%d %d %d %d %d\r\n",sz, buf[1], buf[2], buf[3], buf[4]);
-
-
+	
+	FILE *out = fdopen(dup(fileno(stdout)), "wb");
+	
 	pos = 0;
 	int i;
 	do {
@@ -306,10 +307,10 @@ void serflash_read(void) {
 		r = sz - pos;
 		if (r > sizeof(buf)) r = sizeof(buf);
 		pos+= r;
-		if (r) for (i=0; i < r; i++) putc(buf[i], stdout);
+		if (r) fwrite(buf, r, 1, out);
 	} while (pos<sz);
-
-	fflush(stdout);
+	
+	fclose(out);
 
 };
 
@@ -353,7 +354,7 @@ uint32_t n;
 
 
 void serflash_erase(void) {
-const int timeToSleep = 200;
+const int timeToSleep = 250;
 int t = 0;
 	//printf("erase chip\n");
 	memset(buf, 0, sizeof(buf));
@@ -482,7 +483,8 @@ void eeprom_read(void) {
 
 	hid_rcvWithAck();
 	sz = (buf[1] << 24) | (buf[2] << 16) | (buf[3] << 8) | buf[4];
-
+	
+	FILE *out = fdopen(dup(fileno(stdout)), "wb");
 	pos = 0;
 	int i;
 	do {
@@ -490,7 +492,7 @@ void eeprom_read(void) {
 		r = sz - pos;
 		if (r > sizeof(buf)) r = sizeof(buf);
 		pos+= r;
-		if (r) for (i=0; i < r; i++) putc(buf[i], stdout);
+		if (r) fwrite(buf, r, 1, out);		
 	} while (pos<sz);
 
 	fflush(stdout);
@@ -560,9 +562,12 @@ int main(int argc, char **argv)
 			die("no rawhid device found\n");
 		}
 	}
-
+ 
 	//clock_t t = clock();
+	//int result;
+	//result = _setmode( _fileno( stdout ), _O_BINARY );
 
+   
 	switch(device) {
 		case 0:
 		case 2: serflash();break;
