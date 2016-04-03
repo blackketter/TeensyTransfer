@@ -19,7 +19,7 @@
 #include <fcntl.h>
 #include <windows.h>
 unsigned int _CRT_fmode = _O_BINARY;
-#define DELAY(x) { Sleep( x * 1000); }
+#define DELAY(x) { Sleep( x ); }
 #endif
 
 #include "hid.h"
