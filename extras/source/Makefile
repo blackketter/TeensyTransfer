@@ -52,7 +52,7 @@ $(PROG).exe: $(PROG)
 	$(PACK)
 
 $(PROG).dmg: $(PROG)
-	mkdir tmp
+	mkdir -p tmp
 	cp $(PROG) tmp
 	hdiutil create -ov -volname "Raw HID Test" -srcfolder tmp $(PROG).dmg
 

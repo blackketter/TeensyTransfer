@@ -13,6 +13,7 @@
 #if defined(OS_LINUX) || defined(OS_MACOSX)
 #include <sys/ioctl.h>
 #include <termios.h>
+#include <unistd.h>
 #define DELAY(x) { nanosleep((const struct timespec[]){{0, x * 1000L* 1000L}}, NULL); }
 #elif defined(OS_WINDOWS)
 #include <conio.h>
@@ -301,7 +302,6 @@ void serflash_read(void) {
 	FILE *out = fdopen(dup(fileno(stdout)), "wb");
 	
 	pos = 0;
-	int i;
 	do {
 		hid_rcvWithAck();
 		r = sz - pos;
@@ -486,7 +486,6 @@ void eeprom_read(void) {
 	
 	FILE *out = fdopen(dup(fileno(stdout)), "wb");
 	pos = 0;
-	int i;
 	do {
 		hid_rcvWithAck();
 		r = sz - pos;
