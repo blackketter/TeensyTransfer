@@ -13,7 +13,6 @@
 #if defined(OS_LINUX) || defined(OS_MACOSX)
 #include <sys/ioctl.h>
 #include <termios.h>
-#include <unistd.h>
 #define DELAY(x) { nanosleep((const struct timespec[]){{0, x * 1000L* 1000L}}, NULL); }
 #elif defined(OS_WINDOWS)
 #include <conio.h>
@@ -31,6 +30,7 @@ unsigned int _CRT_fmode = _O_BINARY;
 
 #define DOTCNTPACKETS 64 //Print a dot after x packets (64*64 bytes=4 KB)
 
+const int timeout = 400;
 const int hid_device = 0;
 
 unsigned char buf[64];
@@ -63,7 +63,7 @@ void usage(const char *err)
 		"\t-d : delete file\n"
 		"\t-e : erase device\n"
 		"\t-l : list files\n"
-		"\t-i: dvice info\n"
+		"\t-i : device info\n"
 		//"\t-v : Verbose output\n"
 		"\n"
 		"\t Devices:\n"
@@ -146,13 +146,13 @@ void commErr() {
 }
 
 int hid_sendAck(void) {
-  return rawhid_send(hid_device, buf, sizeof(buf), 100);
+  return rawhid_send(hid_device, buf, sizeof(buf), timeout);
 }
 
 int hid_checkAck() {
 char buf2[sizeof(buf)];
 int n;
-	n = rawhid_recv(hid_device, buf2, sizeof(buf2), 100);
+	n = rawhid_recv(hid_device, buf2, sizeof(buf2), timeout);
 	if (n < 1) return n;
 	n = memcmp(buf, buf2, sizeof(buf));
 	return n;
@@ -161,9 +161,9 @@ int n;
 void hid_sendWithAck() {
 char buf2[sizeof(buf)];
 int n;
-	n = rawhid_send(hid_device, buf, sizeof(buf), 100);
+	n = rawhid_send(hid_device, buf, sizeof(buf), timeout);
 	if (n < 1) commErr();
-	n = rawhid_recv(hid_device, buf2, sizeof(buf2), 100);
+	n = rawhid_recv(hid_device, buf2, sizeof(buf2), timeout);
 	if (n < 1) commErr();
 	n = memcmp(buf, buf2, sizeof(buf));
 	if (n) commErr();
@@ -172,9 +172,9 @@ int n;
 
 void hid_rcvWithAck() {
 int n;
-	n = rawhid_recv(hid_device, buf, sizeof(buf), 100);
+	n = rawhid_recv(hid_device, buf, sizeof(buf), timeout);
 	if (n < 1) commErr();
-	n = rawhid_send(hid_device, buf, sizeof(buf), 100);
+	n = rawhid_send(hid_device, buf, sizeof(buf), timeout);
 	if (n < 1) commErr();
 }
 
@@ -210,7 +210,7 @@ void serflash_write(void) {
 	
 	fp = fopen(fname, "rb");
 	if (fp == NULL) {
-		fprintf(stderr, "Unable to read %s\n\n", fname);
+		fprintf(stderr, "Unable to open %s\n\n", fname);
 		usage(NULL);
 	}
 
@@ -248,7 +248,7 @@ void serflash_write(void) {
 
 	// copy the file into the buffer:
 	r = fread (buffer, 1, sz, fp);
-	if (r != sz) die("File reading error");
+	if (r != sz) die("File read error");
 
 	fclose (fp);
 
@@ -261,7 +261,7 @@ void serflash_write(void) {
 		memset(buf, 0xff, sizeof(buf));
 		memcpy(buf, buffer + pos, c);
 		pos += c;
-		r = rawhid_send(hid_device, buf, sizeof(buf), 200);
+		r = rawhid_send(hid_device, buf, sizeof(buf), timeout*2);
 		if (r < 0 ) die("Transfer error");
 		if (++dotcnt > DOTCNTPACKETS) {
 			printf(".");
@@ -299,19 +299,15 @@ void serflash_read(void) {
 	sz = (buf[1] << 24) | (buf[2] << 16) | (buf[3] << 8) | buf[4];
 	//printf("size:%d %d %d %d %d\r\n",sz, buf[1], buf[2], buf[3], buf[4]);
 	
-	FILE *out = fdopen(dup(fileno(stdout)), "wb");
-	
 	pos = 0;
 	do {
 		hid_rcvWithAck();
 		r = sz - pos;
 		if (r > sizeof(buf)) r = sizeof(buf);
 		pos+= r;
-		if (r) fwrite(buf, r, 1, out);
+		if (r) fwrite(buf, r, 1, stdout);
 	} while (pos<sz);
 	
-	fclose(out);
-
 };
 
 void serflash_list(void) {
@@ -342,10 +338,10 @@ uint32_t n;
 	hid_sendWithAck();
 
 	strncpy((char*)buf, fname, sizeof(buf));
-	rawhid_send(hid_device, buf, sizeof(buf), 100);
+	rawhid_send(hid_device, buf, sizeof(buf), timeout);
 
 
-	n= rawhid_recv(hid_device, buf, sizeof(buf), 100);
+	n= rawhid_recv(hid_device, buf, sizeof(buf), timeout);
 	if (n < 1) commErr();
 	if (buf[0]==0) die("File not found");
 
@@ -367,7 +363,7 @@ int t = 0;
 		buf[0] = 99;
 		buf[1] = device;
 		hid_sendWithAck();
-		rawhid_recv(hid_device, buf, sizeof(buf), 100);
+		rawhid_recv(hid_device, buf, sizeof(buf), timeout);
 		if (buf[0]==0) break;
 		if (++t >= 1000 /  timeToSleep / 2) {
 			printf(".");
@@ -387,7 +383,7 @@ uint32_t sz;
 	buf[1] = device;
 	hid_sendWithAck();
 
-	n = rawhid_recv(hid_device, buf, sizeof(buf), 100);
+	n = rawhid_recv(hid_device, buf, sizeof(buf), timeout);
 	if (n < 1) commErr();
 	
 	printf("ID    : %02X %02X %02X\n", buf[8], buf[9], buf[10] );
@@ -462,7 +458,7 @@ void eeprom_write(void) {
 		memset(buf, 0xff, sizeof(buf));
 		memcpy(buf, buffer + pos, c);
 		pos += c;
-		r = rawhid_send(hid_device, buf, sizeof(buf), 200);
+		r = rawhid_send(hid_device, buf, sizeof(buf), timeout*2);
 		if (r < 0 ) die("Transfer error");
 	}
 	free (buffer);
@@ -484,17 +480,16 @@ void eeprom_read(void) {
 	hid_rcvWithAck();
 	sz = (buf[1] << 24) | (buf[2] << 16) | (buf[3] << 8) | buf[4];
 	
-	FILE *out = fdopen(dup(fileno(stdout)), "wb");
+
 	pos = 0;
+
 	do {
 		hid_rcvWithAck();
 		r = sz - pos;
 		if (r > sizeof(buf)) r = sizeof(buf);
 		pos+= r;
-		if (r) fwrite(buf, r, 1, out);		
+		if (r) fwrite(buf, r, 1, stdout);		
 	} while (pos<sz);
-
-	fflush(stdout);
 }
 
 /***********************************************************************************************************
@@ -506,7 +501,7 @@ void teensy(void) {
 	buf[0] = mode;
 	buf[1] = device;
 	hid_sendWithAck();
-	rawhid_recv(hid_device, buf, sizeof(buf), 100);
+	rawhid_recv(hid_device, buf, sizeof(buf), timeout);
 	
 	printf("Model : ");
 	switch (buf[0]) {
@@ -545,6 +540,10 @@ void teensy(void) {
 int main(int argc, char **argv)
 {
 
+#if defined(OS_WINDOWS)
+	setmode(fileno(stdout), O_BINARY);
+#endif   
+
 	parse_options(argc, argv);
 
 	if ( (mode == 0 || mode == 1 || mode == 3) && (fname==NULL)  && (device<200)) usage("Filename required");	
@@ -563,10 +562,7 @@ int main(int argc, char **argv)
 	}
  
 	//clock_t t = clock();
-	//int result;
-	//result = _setmode( _fileno( stdout ), _O_BINARY );
 
-   
 	switch(device) {
 		case 0:
 		case 2: serflash();break;
